@@ -40,6 +40,7 @@ docker compose down
 | `/routes` | 通行路线编制：选点自动串联路段，逐段填障碍数/台阶数/路缘高差，输出全线判定 | RouteSegment / AccessPoint |
 | `/map` | 设施地图：按设施类型着色渲染点位，点选弹出核验摘要 | AccessPoint / Inspection |
 | `/rectify` | 整改清单：按状态与期限分组、逾期置顶，登记复检结果 | RectifyPlan / AccessPoint |
+| `/batches` | 离线批次合并：核验员离线登记的批次回内网后整体贴入，待核对取舍与批次记录 | 四个模型 + BatchRecord / PendingConflict |
 
 ## 数据模型（`src/types/` 独立文件）
 
@@ -55,7 +56,8 @@ docker compose down
 - **IndexedDB（Dexie，库名 `gbaccessmap-db`）**：业务数据。含版本号与升级迁移：
   - `v1` 建 `points` / `inspections` 表；
   - `v2` 增加 `routes` 表与 `pointId` 相关索引；
-  - `v3` 增加 `rectifies` 表，并为历史「不合格」核验补建整改条目。
+  - `v3` 增加 `rectifies` 表，并为历史「不合格」核验补建整改条目；
+  - `v4` 增加 `batches`（批次处理记录）/ `conflicts`（待核对）表，并给点位、核验、整改补 `batchId` 索引。
 - **localStorage**：点位登记表单草稿（`gbaccessmap-draft:point-new`）与 UI 偏好（`gbaccessmap-ui`）。
 - 首次打开时自动写入一批示例数据，便于直接体验。
 - 容器无状态：不使用数据库服务、不挂载命名卷，清空浏览器存储即可重置数据。
@@ -80,15 +82,15 @@ sologsb-1127/
     ├── tsconfig*.json
     ├── public/favicon.svg
     └── src/
-        ├── types/{point,inspection,route,rectify}.ts
+        ├── types/{point,inspection,route,rectify,batch}.ts
         ├── db/index.ts                     # Dexie 封装 + 版本迁移 + 示例数据
         ├── stores/{pointStore,routeStore,uiStore}.ts
         ├── components/common/{MapPanel,StatusBadge,FacilityIcon,MeasureInput,EmptyState}.tsx
         ├── hooks/{useAmapLoader,useInspectionFilter,useLocalDraft}.ts
-        ├── pages/{Overview,PointNew,PointDetail,Routes,MapView,Rectify}.tsx
+        ├── pages/{Overview,PointNew,PointDetail,Routes,MapView,Rectify,BatchMerge}.tsx
         ├── layouts/AppLayout.tsx
         ├── router/index.tsx
-        └── utils/{routeCheck,geo,format}.ts
+        └── utils/{routeCheck,geo,format,batchMerge,sampleBatch}.ts
 ```
 
 ## 判定阈值（`src/utils/routeCheck.ts`）
@@ -96,3 +98,22 @@ sologsb-1127/
 - 坡度：≤ 5% 合格，> 5% 限期整改，> 8% 不合格；
 - 净宽：≥ 120cm 合格，< 120cm 限期整改，< 90cm 不合格；
 - 路缘高差：≤ 3cm 可轮椅通行，> 6cm 判定不可通行；存在台阶需绕行或增设坡道。
+
+## 离线批次合并（`/batches`，`src/utils/batchMerge.ts`）
+
+核验员在外网离线登记，回到内网后把批次 JSON 一次贴入，点位、核验、整改在**单个 IndexedDB 事务**内合并：
+
+- **点位属性以台账为准**：台账没有该编号才作为新点位登记；台账已有则不覆盖。台账自上次同步后没动过才回填现场值；现场与台账**双方都改过**的字段写入 `conflicts` 表列「待核对」（可保留台账或人工采用现场），绝不用现场值静默覆盖；
+- **核验去重**：同一核验人 + 同一日期 + 同一点位视为重复，库内已存在则丢弃现场记录，并给旧记录补上 `batchId` 批次身份继续参与统计；批次内重复直接校验失败；
+- **整改取更晚有效值**：比较现场与台账条目的复检日期 / 更新时间 / 期限，取更晚一方的非空字段，旧值不会被空值清空；
+- **级联重算**：点位（含坐标）或核验一变化，相关整改条目自动重算（最新核验不合格补建待整改、合格则关闭），相关路段按最新端点坐标重算长度与轮椅通行判定；
+- **校验失败整批撤回**：结构 / 枚举 / 日期 / 引用完整性等校验在事务内外双层进行，任一失败事务回滚不留半截数据，失败批次登记到 `batches`（状态「失败」+ 原因），输入内容保留可直接修正重试；同一批次号成功合并后拒绝重复导入。
+
+批次 JSON 形如 `{ "batchId", "inspector", "exportedAt", "syncedAt", "points": [...], "inspections": [...], "rectifies": [...] }`，页面提供「填入演示批次 / 错误批次」按钮。
+
+端到端规则验证（fake-indexeddb，无浏览器）：
+
+```bash
+cd frontend
+npm run verify:batch
+```

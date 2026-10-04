@@ -47,6 +47,8 @@ export interface AccessPoint {
   maintainUnit: string;
   createdAt: string;
   updatedAt: string;
+  /** 由哪个离线批次带入 / 关联（台账老数据可为空） */
+  batchId?: string;
 }
 
 export type AccessPointDraft = Omit<AccessPoint, 'id' | 'createdAt' | 'updatedAt'>;

@@ -28,6 +28,8 @@ export interface Inspection {
   conclusion: InspectionConclusion;
   problem: string;
   createdAt: string;
+  /** 由哪个离线批次带入（旧记录合并重试时补上批次身份） */
+  batchId?: string;
 }
 
 export type InspectionDraft = Omit<Inspection, 'id' | 'createdAt'>;

@@ -1,5 +1,6 @@
-import { useMemo } from 'react';
+import { useMemo, useEffect } from 'react';
 import {
+  Alert,
   Button,
   Card,
   Col,
@@ -13,11 +14,12 @@ import {
   Typography,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { ReloadOutlined, AimOutlined } from '@ant-design/icons';
+import { ReloadOutlined, AimOutlined, CloudSyncOutlined } from '@ant-design/icons';
 import { Link } from 'react-router-dom';
 import dayjs from 'dayjs';
 import { useInspectionFilter } from '../hooks/useInspectionFilter';
 import { useUiStore } from '../stores/uiStore';
+import { usePointStore } from '../stores/pointStore';
 import { DISTRICTS, FACILITY_TYPES, type AccessPoint } from '../types/point';
 import { CONCLUSIONS } from '../types/inspection';
 import type { RectifyPlan } from '../types/rectify';
@@ -48,6 +50,12 @@ export default function Overview() {
   } = useInspectionFilter();
   const drill = useUiStore((s) => s.drill);
   const setDrill = useUiStore((s) => s.setDrill);
+  const openConflicts = usePointStore((s) => s.conflicts.filter((c) => !c.resolved).length);
+  const loadBatches = usePointStore((s) => s.loadBatches);
+
+  useEffect(() => {
+    void loadBatches();
+  }, [loadBatches]);
 
   const districtRows = useMemo<GroupRow[]>(
     () =>
@@ -207,6 +215,23 @@ export default function Overview() {
           </Button>
         </Space>
       </div>
+
+      {openConflicts > 0 && (
+        <Alert
+          type="warning"
+          showIcon
+          icon={<CloudSyncOutlined />}
+          style={{ marginBottom: 16 }}
+          message={`有 ${openConflicts} 条点位属性离线批次与台账双方都改过，已保留台账值并列待核对`}
+          action={
+            <Link to="/batches">
+              <Button size="small" type="primary" ghost>
+                前往核对
+              </Button>
+            </Link>
+          }
+        />
+      )}
 
       <Row gutter={[16, 16]}>
         <Col xs={24} sm={12} lg={6}>

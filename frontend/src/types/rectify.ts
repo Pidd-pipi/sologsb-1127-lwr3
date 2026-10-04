@@ -17,6 +17,10 @@ export interface RectifyPlan {
   recheckDate: string;
   status: RectifyStatus;
   createdAt: string;
+  /** 最近一次状态更新时间（离线合并时与复检日期一起比较新旧） */
+  updatedAt?: string;
+  /** 由哪个离线批次带入（旧记录合并重试时补上批次身份） */
+  batchId?: string;
 }
 
 export type RectifyPlanDraft = Omit<RectifyPlan, 'id' | 'createdAt'>;
