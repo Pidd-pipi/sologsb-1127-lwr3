@@ -3,8 +3,10 @@ import type { AccessPoint } from '../types/point';
 import type { Inspection } from '../types/inspection';
 import type { RouteSegment } from '../types/route';
 import type { RectifyPlan } from '../types/rectify';
+import type { OfflineBatch, PointConflict } from '../types/batch';
 import { addDays, makeId, todayStr, toPlain } from '../utils/format';
 import { judgeInspection } from '../utils/routeCheck';
+import { LEDGER_BATCH_ID } from '../utils/batchConstants';
 
 export const DB_NAME = 'gbaccessmap-db';
 
@@ -13,12 +15,15 @@ export const DB_NAME = 'gbaccessmap-db';
  * v1 建 points / inspections
  * v2 加 routes 表与 pointId 索引
  * v3 加 rectifies 表，并为历史不合格核验补建整改条目
+ * v4 加 batches / conflicts 表，并为历史记录补上批次身份（台账批次）
  */
 class AccessMapDb extends Dexie {
   points!: Table<AccessPoint, string>;
   inspections!: Table<Inspection, string>;
   routes!: Table<RouteSegment, string>;
   rectifies!: Table<RectifyPlan, string>;
+  batches!: Table<OfflineBatch, string>;
+  conflicts!: Table<PointConflict, string>;
 
   constructor() {
     super(DB_NAME);
@@ -69,6 +74,56 @@ class AccessMapDb extends Dexie {
             recheckDate: '',
             status: '待整改',
             createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            batchId: LEDGER_BATCH_ID,
+          });
+        }
+      });
+    this.version(4)
+      .stores({
+        points: 'id, code, facilityType, district, name, batchId',
+        inspections: 'id, pointId, date, conclusion, batchId',
+        routes: 'id, routeName, fromPointId, toPointId, order, batchId',
+        rectifies: 'id, pointId, status, deadline, batchId',
+        batches: 'id, code, status, source',
+        conflicts: 'id, batchId, pointId, status',
+      })
+      .upgrade(async (tx) => {
+        // v4：为历史记录补上批次身份（台账批次），并登记台账批次元数据
+        const now = new Date().toISOString();
+        const pointTable = tx.table('points');
+        const inspTable = tx.table('inspections');
+        const routeTable = tx.table('routes');
+        const rectifyTable = tx.table('rectifies');
+        for (const p of await pointTable.toArray()) {
+          if (!p.batchId) await pointTable.update(p.id, { batchId: LEDGER_BATCH_ID });
+        }
+        for (const ins of await inspTable.toArray()) {
+          if (!ins.batchId) await inspTable.update(ins.id, { batchId: LEDGER_BATCH_ID });
+        }
+        for (const r of await routeTable.toArray()) {
+          if (!r.batchId) await routeTable.update(r.id, { batchId: LEDGER_BATCH_ID });
+        }
+        for (const r of await rectifyTable.toArray()) {
+          const patch: Partial<RectifyPlan> = {};
+          if (!r.batchId) patch.batchId = LEDGER_BATCH_ID;
+          if (!r.updatedAt) patch.updatedAt = r.createdAt || now;
+          if (Object.keys(patch).length) await rectifyTable.update(r.id, patch);
+        }
+        const batchTable = tx.table('batches');
+        const existed = await batchTable.get(LEDGER_BATCH_ID);
+        if (!existed) {
+          await batchTable.add({
+            id: LEDGER_BATCH_ID,
+            code: '台账',
+            source: 'ledger',
+            status: 'merged',
+            registrar: '系统',
+            note: '历史数据与交互式登记数据的权威台账批次',
+            rawInput: '',
+            failReason: '',
+            createdAt: now,
+            mergedAt: now,
           });
         }
       });
@@ -77,7 +132,7 @@ class AccessMapDb extends Dexie {
 
 export const db = new AccessMapDb();
 
-const SEED_POINTS: Omit<AccessPoint, 'createdAt' | 'updatedAt'>[] = [
+const SEED_POINTS: Omit<AccessPoint, 'createdAt' | 'updatedAt' | 'batchId'>[] = [
   {
     id: 'pt-1001',
     code: 'WZ-2024-001',
@@ -300,9 +355,15 @@ const SEED_ROUTES: SeedRoute[] = [
 ];
 
 function buildSeed() {
-  const now = new Date().toISOString();
+  // 种子数据为历史记录，时间戳取固定过去日期，避免台账 updatedAt 恒为「现在」而在合并裁定中恒胜
+  const now = '2025-01-15T00:00:00.000Z';
   const today = todayStr();
-  const points: AccessPoint[] = SEED_POINTS.map((p) => ({ ...p, createdAt: now, updatedAt: now }));
+  const points: AccessPoint[] = SEED_POINTS.map((p) => ({
+    ...p,
+    createdAt: now,
+    updatedAt: now,
+    batchId: LEDGER_BATCH_ID,
+  }));
   const inspections: Inspection[] = SEED_INSPECTIONS.map((s, i) => {
     const judged = judgeInspection({
       slope: s.slope,
@@ -324,6 +385,7 @@ function buildSeed() {
       conclusion: judged.conclusion,
       problem: s.problem,
       createdAt: now,
+      batchId: LEDGER_BATCH_ID,
     };
   });
   const routes: RouteSegment[] = [];
@@ -341,6 +403,7 @@ function buildSeed() {
         wheelchairPassable: r.stepCount === 0 && r.curbHeight <= 3 && r.obstacleCount <= 2,
         order: i,
         createdAt: now,
+        batchId: LEDGER_BATCH_ID,
       });
     }
   });
@@ -354,6 +417,8 @@ function buildSeed() {
       recheckDate: '',
       status: '待整改',
       createdAt: now,
+      updatedAt: now,
+      batchId: LEDGER_BATCH_ID,
     },
     {
       id: 'rct-seed-2',
@@ -364,6 +429,8 @@ function buildSeed() {
       recheckDate: '',
       status: '待整改',
       createdAt: now,
+      updatedAt: now,
+      batchId: LEDGER_BATCH_ID,
     },
     {
       id: 'rct-seed-3',
@@ -374,6 +441,8 @@ function buildSeed() {
       recheckDate: '',
       status: '待整改',
       createdAt: now,
+      updatedAt: now,
+      batchId: LEDGER_BATCH_ID,
     },
     {
       id: 'rct-seed-4',
@@ -384,6 +453,8 @@ function buildSeed() {
       recheckDate: addDays(today, -12),
       status: '已整改',
       createdAt: now,
+      updatedAt: now,
+      batchId: LEDGER_BATCH_ID,
     },
   ];
   return { points, inspections, routes, rectifies };
@@ -392,14 +463,54 @@ function buildSeed() {
 /** 首次打开时写入示例数据；已有数据则跳过 */
 export async function ensureSeed(): Promise<void> {
   const count = await db.points.count();
-  if (count > 0) return;
+  if (count > 0) {
+    // 已有数据：补登台账批次元数据（v4 迁移已处理，这里兜底）
+    const ledgerBatch = await db.batches.get(LEDGER_BATCH_ID);
+    if (!ledgerBatch) {
+      const now = new Date().toISOString();
+      await db.batches.put({
+        id: LEDGER_BATCH_ID,
+        code: '台账',
+        source: 'ledger',
+        status: 'merged',
+        registrar: '系统',
+        note: '历史数据与交互式登记数据的权威台账批次',
+        rawInput: '',
+        failReason: '',
+        createdAt: now,
+        mergedAt: now,
+      });
+    }
+    return;
+  }
   const seed = toPlain(buildSeed());
-  await db.transaction('rw', db.points, db.inspections, db.routes, db.rectifies, async () => {
-    await db.points.bulkPut(seed.points);
-    await db.inspections.bulkPut(seed.inspections);
-    await db.routes.bulkPut(seed.routes);
-    await db.rectifies.bulkPut(seed.rectifies);
-  });
+  const now = new Date().toISOString();
+  await db.transaction(
+    'rw',
+    db.points,
+    db.inspections,
+    db.routes,
+    db.rectifies,
+    db.batches,
+    async () => {
+      await db.points.bulkPut(seed.points);
+      await db.inspections.bulkPut(seed.inspections);
+      await db.routes.bulkPut(seed.routes);
+      await db.rectifies.bulkPut(seed.rectifies);
+      await db.batches.put({
+        id: LEDGER_BATCH_ID,
+        code: '台账',
+        source: 'ledger',
+        status: 'merged',
+        registrar: '系统',
+        note: '历史数据与交互式登记数据的权威台账批次',
+        rawInput: '',
+        failReason: '',
+        createdAt: now,
+        mergedAt: now,
+      });
+    },
+  );
 }
 
 export { makeId };

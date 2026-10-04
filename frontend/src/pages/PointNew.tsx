@@ -115,6 +115,7 @@ export default function PointNew() {
       maintainUnit: draft.maintainUnit,
       createdAt: '',
       updatedAt: '',
+      batchId: '',
     };
     return [self, ...points];
   }, [draft, points]);

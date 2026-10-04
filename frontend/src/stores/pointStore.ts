@@ -4,6 +4,7 @@ import type { AccessPoint, AccessPointDraft } from '../types/point';
 import type { Inspection, InspectionDraft } from '../types/inspection';
 import type { RectifyPlan, RectifyPlanDraft } from '../types/rectify';
 import { makeId, toPlain, todayStr } from '../utils/format';
+import { LEDGER_BATCH_ID } from '../utils/batchConstants';
 
 interface PointState {
   points: AccessPoint[];
@@ -58,6 +59,7 @@ export const usePointStore = create<PointState>((set, get) => ({
       id: makeId('pt'),
       createdAt: now,
       updatedAt: now,
+      batchId: LEDGER_BATCH_ID,
     });
     await db.points.put(point);
     set((s) => ({ points: [...s.points, point].sort((a, b) => a.code.localeCompare(b.code)) }));
@@ -69,6 +71,7 @@ export const usePointStore = create<PointState>((set, get) => ({
       ...draft,
       id: makeId('ins'),
       createdAt: new Date().toISOString(),
+      batchId: LEDGER_BATCH_ID,
     });
     await db.inspections.put(inspection);
     set((s) => ({
@@ -94,10 +97,13 @@ export const usePointStore = create<PointState>((set, get) => ({
   },
 
   addRectify: async (draft) => {
+    const now = new Date().toISOString();
     const plan: RectifyPlan = toPlain({
       ...draft,
       id: makeId('rct'),
-      createdAt: new Date().toISOString(),
+      createdAt: now,
+      updatedAt: now,
+      batchId: LEDGER_BATCH_ID,
     });
     await db.rectifies.put(plan);
     set((s) => ({

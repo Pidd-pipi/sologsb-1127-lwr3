@@ -17,9 +17,13 @@ export interface RectifyPlan {
   recheckDate: string;
   status: RectifyStatus;
   createdAt: string;
+  /** 最近一次状态/内容更新时间（与复检日期共同决定整改状态裁定） */
+  updatedAt: string;
+  /** 批次身份：台账批次或离线导入批次 id */
+  batchId: string;
 }
 
-export type RectifyPlanDraft = Omit<RectifyPlan, 'id' | 'createdAt'>;
+export type RectifyPlanDraft = Omit<RectifyPlan, 'id' | 'createdAt' | 'updatedAt' | 'batchId'>;
 
 /** 按状态与期限分组后的清单结构 */
 export interface RectifyGroup {

@@ -28,6 +28,8 @@ export interface Inspection {
   conclusion: InspectionConclusion;
   problem: string;
   createdAt: string;
+  /** 批次身份：台账批次或离线导入批次 id */
+  batchId: string;
 }
 
-export type InspectionDraft = Omit<Inspection, 'id' | 'createdAt'>;
+export type InspectionDraft = Omit<Inspection, 'id' | 'createdAt' | 'batchId'>;

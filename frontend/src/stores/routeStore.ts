@@ -6,6 +6,7 @@ import { makeId, toPlain } from '../utils/format';
 import { judgeSegment, buildVerdict } from '../utils/routeCheck';
 import { segmentLength } from '../utils/geo';
 import type { RouteVerdict } from '../types/route';
+import { LEDGER_BATCH_ID } from '../utils/batchConstants';
 
 /** 编辑中的路段（尚未落库） */
 export interface DraftSegment {
@@ -128,6 +129,7 @@ export const useRouteStore = create<RouteState>((set, get) => ({
 
   saveRoute: async () => {
     const { draftSegments, draftName } = get();
+    const now = new Date().toISOString();
     const rows: RouteSegment[] = draftSegments.map((seg) =>
       toPlain({
         id: makeId('rts'),
@@ -140,7 +142,8 @@ export const useRouteStore = create<RouteState>((set, get) => ({
         curbHeight: seg.curbHeight,
         wheelchairPassable: judgeSegment(seg).passable,
         order: seg.order,
-        createdAt: new Date().toISOString(),
+        createdAt: now,
+        batchId: LEDGER_BATCH_ID,
       }),
     );
     if (!rows.length) return 0;

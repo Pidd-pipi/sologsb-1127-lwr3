@@ -18,9 +18,11 @@ export interface RouteSegment {
   /** 在整条路线中的顺序，从 1 开始 */
   order: number;
   createdAt: string;
+  /** 批次身份：台账批次或离线导入批次 id */
+  batchId: string;
 }
 
-export type RouteSegmentDraft = Omit<RouteSegment, 'id' | 'createdAt' | 'wheelchairPassable'>;
+export type RouteSegmentDraft = Omit<RouteSegment, 'id' | 'createdAt' | 'wheelchairPassable' | 'batchId'>;
 
 /** 全线判定结果 */
 export interface RouteVerdict {

@@ -1,5 +1,6 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
+  App,
   Button,
   Card,
   Col,
@@ -13,17 +14,21 @@ import {
   Typography,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { ReloadOutlined, AimOutlined } from '@ant-design/icons';
+import { ReloadOutlined, AimOutlined, UploadOutlined, WarningOutlined, HistoryOutlined } from '@ant-design/icons';
 import { Link } from 'react-router-dom';
 import dayjs from 'dayjs';
 import { useInspectionFilter } from '../hooks/useInspectionFilter';
 import { useUiStore } from '../stores/uiStore';
+import { useBatchStore } from '../stores/batchStore';
+import { usePointStore } from '../stores/pointStore';
 import { DISTRICTS, FACILITY_TYPES, type AccessPoint } from '../types/point';
 import { CONCLUSIONS } from '../types/inspection';
 import type { RectifyPlan } from '../types/rectify';
+import type { OfflineBatch, PointConflict } from '../types/batch';
 import StatusBadge from '../components/common/StatusBadge';
 import FacilityIcon from '../components/common/FacilityIcon';
 import EmptyState from '../components/common/EmptyState';
+import BatchImportModal from '../components/batch/BatchImportModal';
 import { isOverdue, percent } from '../utils/format';
 
 interface GroupRow {
@@ -36,6 +41,7 @@ interface GroupRow {
 }
 
 export default function Overview() {
+  const { message } = App.useApp();
   const {
     filter,
     setFilter,
@@ -48,6 +54,114 @@ export default function Overview() {
   } = useInspectionFilter();
   const drill = useUiStore((s) => s.drill);
   const setDrill = useUiStore((s) => s.setDrill);
+  const batches = useBatchStore((s) => s.batches);
+  const conflicts = useBatchStore((s) => s.conflicts);
+  const loadBatches = useBatchStore((s) => s.load);
+  const retryBatch = useBatchStore((s) => s.retryBatch);
+  const resolveConflict = useBatchStore((s) => s.resolveConflict);
+  const loadPoints = usePointStore((s) => s.load);
+  const [importOpen, setImportOpen] = useState(false);
+  const [retryingId, setRetryingId] = useState('');
+
+  useEffect(() => {
+    void loadBatches();
+  }, [loadBatches]);
+
+  const pendingConflicts = useMemo(
+    () => conflicts.filter((c) => c.status === 'pending'),
+    [conflicts],
+  );
+  const recentBatches = useMemo(() => batches.slice(0, 6), [batches]);
+
+  const handleRetry = async (batchId: string) => {
+    setRetryingId(batchId);
+    try {
+      const { report } = await retryBatch(batchId);
+      message.success(`批次 ${report.batchCode} 重试成功，已合并进台账`);
+    } catch (e) {
+      message.error(`重试失败：${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setRetryingId('');
+    }
+  };
+
+  const conflictColumns: ColumnsType<PointConflict> = [
+    { title: '点位编号', dataIndex: 'pointCode', width: 130 },
+    { title: '点位名称', dataIndex: 'pointName', ellipsis: true },
+    {
+      title: '冲突属性（台账 → 现场）',
+      render: (_, row) => (
+        <Space size={4} wrap>
+          {Object.keys(row.fieldValues).map((k) => (
+            <Tag key={k} color="orange">
+              {k}：{String((row.ledgerValues as Record<string, unknown>)[k] ?? '—')} →{' '}
+              {String((row.fieldValues as Record<string, unknown>)[k] ?? '—')}
+            </Tag>
+          ))}
+        </Space>
+      ),
+    },
+    {
+      title: '状态',
+      dataIndex: 'status',
+      width: 90,
+      render: (s: string) => <StatusBadge value={s === 'pending' ? '待核对' : '已处理'} kind="generic" />,
+    },
+    {
+      title: '操作',
+      width: 100,
+      render: (_, row) =>
+        row.status === 'pending' ? (
+          <Button size="small" onClick={() => resolveConflict(row.id)} data-testid={`resolve-conflict-${row.id}`}>
+            标记已核对
+          </Button>
+        ) : null,
+    },
+  ];
+
+  const batchColumns: ColumnsType<OfflineBatch> = [
+    { title: '批次编号', dataIndex: 'code', width: 150 },
+    {
+      title: '来源',
+      dataIndex: 'source',
+      width: 90,
+      render: (s: string) => <Tag color={s === 'ledger' ? 'blue' : 'geekblue'}>{s === 'ledger' ? '台账' : '离线'}</Tag>,
+    },
+    { title: '登记人', dataIndex: 'registrar', width: 120 },
+    {
+      title: '状态',
+      dataIndex: 'status',
+      width: 90,
+      render: (s: string) => {
+        const color = s === 'merged' ? 'success' : s === 'failed' ? 'error' : s === 'pending' ? 'warning' : 'default';
+        return <Tag color={color}>{s === 'merged' ? '已合并' : s === 'failed' ? '失败' : s === 'pending' ? '待合并' : '已撤回'}</Tag>;
+      },
+    },
+    { title: '登记时间', dataIndex: 'createdAt', width: 170, render: (v: string) => (v ? dayjs(v).format('YYYY-MM-DD HH:mm') : '—') },
+    {
+      title: '失败原因',
+      dataIndex: 'failReason',
+      ellipsis: true,
+      render: (v: string) => v || '—',
+    },
+    {
+      title: '操作',
+      width: 90,
+      render: (_, row) =>
+        row.status === 'failed' ? (
+          <Button
+            size="small"
+            type="primary"
+            ghost
+            loading={retryingId === row.id}
+            onClick={() => handleRetry(row.id)}
+            data-testid={`retry-batch-${row.id}`}
+          >
+            重试
+          </Button>
+        ) : null,
+    },
+  ];
 
   const districtRows = useMemo<GroupRow[]>(
     () =>
@@ -205,6 +319,14 @@ export default function Overview() {
           <Button icon={<ReloadOutlined />} onClick={resetFilter}>
             重置
           </Button>
+          <Button
+            type="primary"
+            icon={<UploadOutlined />}
+            onClick={() => setImportOpen(true)}
+            data-testid="import-batch"
+          >
+            导入离线批次
+          </Button>
         </Space>
       </div>
 
@@ -240,6 +362,60 @@ export default function Overview() {
         <Col xs={24} sm={12} lg={6}>
           <Card className="gb-stat-card" data-testid="stat-inspections">
             <Statistic title="核验记录" value={filteredInspections.length} suffix="次" />
+          </Card>
+        </Col>
+      </Row>
+
+      <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
+        <Col xs={24} lg={12}>
+          <Card
+            title={
+              <Space size={8}>
+                <WarningOutlined />
+                <span>待核对点位</span>
+                {pendingConflicts.length ? <Tag color="orange">{pendingConflicts.length}</Tag> : null}
+              </Space>
+            }
+            size="small"
+          >
+            {pendingConflicts.length ? (
+              <Table<PointConflict>
+                rowKey="id"
+                size="small"
+                pagination={false}
+                dataSource={pendingConflicts}
+                columns={conflictColumns}
+              />
+            ) : (
+              <EmptyState
+                title="没有待核对点位"
+                description="台账与现场都改过的点位会列在这里，台账为准不覆盖"
+                compact
+              />
+            )}
+          </Card>
+        </Col>
+        <Col xs={24} lg={12}>
+          <Card
+            title={
+              <Space size={8}>
+                <HistoryOutlined />
+                <span>批次记录</span>
+              </Space>
+            }
+            size="small"
+          >
+            {recentBatches.length ? (
+              <Table<OfflineBatch>
+                rowKey="id"
+                size="small"
+                pagination={false}
+                dataSource={recentBatches}
+                columns={batchColumns}
+              />
+            ) : (
+              <EmptyState title="暂无批次记录" description="点击右上角「导入离线批次」合并现场数据" compact />
+            )}
           </Card>
         </Col>
       </Row>
@@ -334,6 +510,15 @@ export default function Overview() {
           <EmptyState title="没有匹配的点位" description="调整行政区、设施类型或日期筛选后再试" />
         )}
       </Card>
+
+      <BatchImportModal
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        onImported={() => {
+          void loadBatches();
+          void loadPoints();
+        }}
+      />
     </div>
   );
 }
